@@ -2,37 +2,40 @@
 pragma solidity ^0.8.0;
 
 contract Flip {
-    struct Game {
-        address initiator;
-        uint256 amount;
+  struct Game {
+    address initiator;
+    uint256 amount;
+  }
+
+  Game[] private games;
+
+  event Result(bool result);
+
+  constructor() {}
+
+  function openGame() public payable {
+    games.push(Game({ initiator: msg.sender, amount: msg.value }));
+  }
+
+  function acceptGame(uint256 _id) public payable {
+    bool result = uint256(
+      keccak256(abi.encodePacked(block.difficulty, block.timestamp))
+    ) %
+      2 ==
+      0;
+    address payable winner;
+    if (result) {
+      winner = payable(msg.sender);
+    } else {
+      winner = payable(games[_id].initiator);
     }
+    winner.transfer(games[_id].amount * 2);
+    emit Result(result);
+    games[_id] = games[games.length - 1];
+    games.pop();
+  }
 
-    Game[] private games;
-
-    event Result(bool res);
-
-    constructor() {}
-
-    function getGame(uint256 _id) public view returns (Game memory) {
-        return games[_id];
-    }
-
-    function getGames() public view returns (Game[] memory) {
-        return games;
-    }
-
-    function openGame(uint256 _amount) public {
-        games.push(Game({initiator: msg.sender, amount: _amount}));
-    }
-
-    function acceptGame(uint256 _id) public {
-        uint256 result = block.timestamp % 2;
-        if (result == 0) {
-            emit Result(true);
-        } else {
-            emit Result(false);
-        }
-        games[_id] = games[games.length - 1];
-        games.pop();
-    }
+  function getGames() public view returns (Game[] memory) {
+    return games;
+  }
 }
