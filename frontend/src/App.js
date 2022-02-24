@@ -12,10 +12,15 @@ import {
   CardActions,
   Avatar,
   Typography,
+  FormControl,
+  Select,
+  MenuItem,
   TextField,
   Button,
   Modal,
 } from "@mui/material";
+import RenJS from "@renproject/ren";
+import { Bitcoin, Ethereum } from "@renproject/chains";
 import Identicon from "react-identicons";
 import FLIP_JSON from "./Flip.json";
 import "./App.css";
@@ -24,11 +29,16 @@ import "@fontsource/roboto/400.css";
 import "@fontsource/roboto/500.css";
 import "@fontsource/roboto/700.css";
 
+const COIN = {
+  ETH: "ETH",
+  BTC: "BTC",
+};
 // const HARDHAT_NETWORK_ID = "31337";
-const contractAddress = "0x0dcd1bf9a1b36ce34237eeafef220932846bcd82";
+const contractAddress = "0xcD2FAC21a5ed4386a2f8e4D6ea8F372320545fC9";
 let web3Provider = window.ethereum;
 const web3 = new Web3(web3Provider || "http://127.0.0.1:8545");
 const contract = new web3.eth.Contract(FLIP_JSON.abi, contractAddress);
+const renJS = new RenJS("testnet", { useV2TransactionFormat: true });
 
 function App() {
   const modalStyle = {
@@ -44,16 +54,21 @@ function App() {
   };
 
   let [address, setAddress] = useState();
+  let [btcAddress, setBtcAddress] = useState("");
+  let [gatewayAddress, setGatewayAddress] = useState();
   let [balance, setBalance] = useState();
+  let [btcBalance, setBtcBalance] = useState();
   let [contractBalance, setContractBalance] = useState();
   let [amount, setAmount] = useState("");
   let [games, setGames] = useState([]);
 
   let [createGameModalIsOpened, setCreateGameModalIsOpened] = useState(false);
+  let [selectedCoin, setSelectedCoin] = useState(COIN.ETH);
 
   useEffect(() => {
     getAddress();
-    getContractBalance();
+    getContractEthBalance();
+    getContractBtcBalance();
     updateGames();
   }, []);
 
@@ -61,14 +76,74 @@ function App() {
     updateBalance();
   }, [address]);
 
-  const openGame = () => {
-    contract.methods
-      .openGame()
-      .send({ from: address, value: web3.utils.toWei(amount, "ether") })
-      .then(() => {
-        update();
+  const openGame = async () => {
+    if (selectedCoin === COIN.ETH) {
+      contract.methods
+        .openGameWithEth()
+        .send({ from: address, value: web3.utils.toWei(amount, "ether") })
+        .then(() => {
+          update();
+        });
+
+      setCreateGameModalIsOpened(false);
+    } else {
+      const mint = await renJS.lockAndMint({
+        asset: "BTC",
+        from: Bitcoin(),
+        to: Ethereum(web3.currentProvider).Contract({
+          sendTo: contractAddress,
+          // The name of the function we want to call
+          contractFn: "openGameWithBtc",
+          // Arguments expected for calling `deposit`
+          contractParams: [
+            {
+              name: "_msg",
+              type: "bytes",
+              value: Buffer.from(`Depositing ${amount} BTC`),
+            },
+            {
+              name: "_btcAddress",
+              type: "bytes",
+              value: Buffer.from(btcAddress),
+            },
+          ],
+        }),
       });
-    setCreateGameModalIsOpened(false);
+      setGatewayAddress(mint.gatewayAddress);
+      mint.on("deposit", async (deposit) => {
+        const hash = deposit.txHash();
+        console.log(hash);
+        const depositLog = (msg) =>
+          console.log(
+            `BTC deposit: ${Bitcoin.utils.transactionExplorerLink(
+              deposit.depositDetails.transaction,
+              "testnet"
+            )}\n
+            RenVM Hash: ${hash}\n
+            Status: ${deposit.status}\n
+            ${msg}`
+          );
+
+        await deposit
+          .confirmed()
+          .on("target", (target) => depositLog(`0/${target} confirmations`))
+          .on("confirmation", (confs, target) =>
+            depositLog(`${confs}/${target} confirmations`)
+          );
+
+        await deposit
+          .signed()
+          // Print RenVM status - "pending", "confirming" or "done".
+          .on("status", (status) => depositLog(`Status: ${status}`));
+
+        await deposit
+          .mint()
+          // Print Ethereum transaction hash.
+          .on("transactionHash", (txHash) => depositLog(`Mint tx: ${txHash}`));
+
+        console.log(`Deposited ${amount} BTC.`);
+      });
+    }
   };
 
   const acceptGame = (id, amount) => {
@@ -108,20 +183,37 @@ function App() {
 
   const update = () => {
     updateGames();
-    getContractBalance();
+    getContractEthBalance();
+    getContractBtcBalance();
     getAddress();
     updateBalance();
   };
 
-  const getContractBalance = () => {
+  const getContractEthBalance = () => {
     web3.eth.getBalance(contractAddress).then((balance) => {
       setContractBalance(web3.utils.fromWei(balance, "ether"));
     });
   };
 
+  const getContractBtcBalance = () => {
+    contract.methods
+      .getBtcBalance()
+      .call()
+      .then((btcBalance) => {
+        setBtcBalance(btcBalance);
+      });
+  };
+
   const handleCloseCreateGameModal = () => {
     setAmount("");
+    setSelectedCoin(COIN.ETH);
+    setBtcAddress("");
+    setGatewayAddress("");
     setCreateGameModalIsOpened(false);
+  };
+
+  const handleCoinSelectChange = (event) => {
+    setSelectedCoin(event.target.value);
   };
 
   return (
@@ -138,7 +230,7 @@ function App() {
           <Stack>
             <Typography variant="h6">Contract Balance</Typography>
             <Typography variant="h3" sx={{ color: "#009688" }}>
-              {Number(contractBalance).toFixed(2)} ETH
+              {Number(contractBalance).toFixed(2)} ETH / {btcBalance} BTC
             </Typography>
           </Stack>
           <Stack>
@@ -167,7 +259,7 @@ function App() {
               <Identicon string={address} size={50} />
             </Avatar>
             <Typography variant="h2">
-              {Number(balance).toFixed(2)} <sup>ETH</sup>
+              {Number(balance).toFixed(6)} <sup>ETH</sup>
             </Typography>
             <Typography variant="body2" alignSelf="flex-end">
               {address}
@@ -194,14 +286,39 @@ function App() {
         >
           <Box sx={modalStyle}>
             <Stack spacing={5}>
-              <TextField
-                autoFocus
-                label="Amount (ETH)"
-                variant="standard"
-                value={amount}
-                type="number"
-                onChange={(e) => setAmount(e.target.value)}
-              />
+              <Stack spacing={2} direction="row">
+                <TextField
+                  autoFocus
+                  label={`Amount (${selectedCoin})`}
+                  variant="standard"
+                  value={amount}
+                  type="number"
+                  onChange={(e) => setAmount(e.target.value)}
+                />
+                <FormControl>
+                  <Select
+                    value={selectedCoin}
+                    onChange={handleCoinSelectChange}
+                  >
+                    <MenuItem value={COIN.ETH}>ETH</MenuItem>
+                    <MenuItem value={COIN.BTC}>BTC</MenuItem>
+                  </Select>
+                </FormControl>
+              </Stack>
+              {selectedCoin === COIN.BTC && (
+                <>
+                  <TextField
+                    autoFocus
+                    label="BTC recipient address"
+                    variant="standard"
+                    value={btcAddress}
+                    onChange={(e) => setBtcAddress(e.target.value)}
+                  />
+                  <Typography variant="body">
+                    Gateway Address: {gatewayAddress}
+                  </Typography>
+                </>
+              )}
               <Stack spacing={2} direction="row">
                 <Button variant="contained" onClick={openGame}>
                   Bet
@@ -241,9 +358,9 @@ function App() {
                   </Stack>
                   <Typography variant="h4" sx={{ textAlign: "center", mt: 5 }}>
                     {Number(web3.utils.fromWei(game.amount, "ether")).toFixed(
-                      2
-                    )}{" "}
-                    ETH
+                      6
+                    )}
+                    {game.isEth ? COIN.ETH : COIN.BTC}
                   </Typography>
                 </CardContent>
                 <CardActions>

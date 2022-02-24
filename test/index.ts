@@ -21,15 +21,17 @@ describe("Flip", function () {
   // });
 
   it("Check balance status", async function () {
-    const [owner, addr1] = await ethers.getSigners();
+    // const [owner, addr1] = await ethers.getSigners();
 
     const Flip = await ethers.getContractFactory("Flip");
-    const flip = await Flip.deploy();
+    const flip = await Flip.deploy(
+      "0x557e211EC5fc9a6737d2C6b7a1aDe3e0C11A8D5D"
+    );
     await flip.deployed();
-    const balance = await flip.balance();
+    const balance = await ethers.provider.getBalance(flip.address);
     expect(balance).to.equal(0);
 
-    // await flip.openGame(5);
+    // await flip.openGameWithEth(5);
     // await flip.connect(addr1).openGame(10);
 
     // const result = await flip.getGames();
