@@ -20,7 +20,7 @@ import {
   Modal,
 } from "@mui/material";
 import RenJS from "@renproject/ren";
-import { Bitcoin, Ethereum } from "@renproject/chains";
+import { Bitcoin, Ethereum, Terra } from "@renproject/chains";
 import Identicon from "react-identicons";
 import FLIP_JSON from "./Flip.json";
 import "./App.css";
@@ -32,9 +32,10 @@ import "@fontsource/roboto/700.css";
 const COIN = {
   ETH: "ETH",
   BTC: "BTC",
+  LUNA: "LUNA",
 };
-// const HARDHAT_NETWORK_ID = "31337";
-const contractAddress = "0xcD2FAC21a5ed4386a2f8e4D6ea8F372320545fC9";
+
+const contractAddress = "0x5701364dCF0D5Cc7AABca654402C6ec6755F1450";
 let web3Provider = window.ethereum;
 const web3 = new Web3(web3Provider || "http://127.0.0.1:8545");
 const contract = new web3.eth.Contract(FLIP_JSON.abi, contractAddress);
@@ -54,96 +55,220 @@ function App() {
   };
 
   let [address, setAddress] = useState();
-  let [btcAddress, setBtcAddress] = useState("");
+  let [recipientAddress, setRecipientAddress] = useState("");
   let [gatewayAddress, setGatewayAddress] = useState();
-  let [balance, setBalance] = useState();
-  let [btcBalance, setBtcBalance] = useState();
-  let [contractBalance, setContractBalance] = useState();
+  let [userbalance, setUserBalance] = useState({
+    ETH: 0,
+    BTC: 0,
+    LUNA: 0,
+  });
+  let [contractBalance, setContractBalance] = useState({
+    ETH: 0,
+    BTC: 0,
+    LUNA: 0,
+  });
   let [amount, setAmount] = useState("");
   let [games, setGames] = useState([]);
 
   let [createGameModalIsOpened, setCreateGameModalIsOpened] = useState(false);
+  let [depositModalIsOpened, setDepositModalIsOpened] = useState(false);
+  let [withdrawModalIsOpened, setWithdrawModalIsOpened] = useState(false);
   let [selectedCoin, setSelectedCoin] = useState(COIN.ETH);
 
   useEffect(() => {
     getAddress();
-    getContractEthBalance();
-    getContractBtcBalance();
-    updateGames();
+    getContractBalance();
+    getGames();
   }, []);
 
   useEffect(() => {
-    updateBalance();
+    getUserBalance();
   }, [address]);
 
-  const openGame = async () => {
-    if (selectedCoin === COIN.ETH) {
-      contract.methods
-        .openGameWithEth()
-        .send({ from: address, value: web3.utils.toWei(amount, "ether") })
-        .then(() => {
-          update();
-        });
+  const getAddress = () => {
+    web3.eth.getAccounts().then((accounts) => {
+      setAddress(accounts[0]);
+    });
+  };
 
-      setCreateGameModalIsOpened(false);
-    } else {
-      const mint = await renJS.lockAndMint({
-        asset: "BTC",
-        from: Bitcoin(),
-        to: Ethereum(web3.currentProvider).Contract({
-          sendTo: contractAddress,
-          // The name of the function we want to call
-          contractFn: "openGameWithBtc",
-          // Arguments expected for calling `deposit`
-          contractParams: [
-            {
-              name: "_msg",
-              type: "bytes",
-              value: Buffer.from(`Depositing ${amount} BTC`),
-            },
-            {
-              name: "_btcAddress",
-              type: "bytes",
-              value: Buffer.from(btcAddress),
-            },
-          ],
-        }),
+  const getContractBalance = () => {
+    web3.eth.getBalance(contractAddress).then((balance) => {
+      setContractBalance((prevState) => ({
+        ...prevState,
+        ETH: web3.utils.fromWei(balance, "ether"),
+      }));
+    });
+    contract.methods
+      .getTotalBalance()
+      .call()
+      .then((balance) => {
+        console.log("Contract Balance: ", balance);
+        setContractBalance((prevState) => ({
+          ...prevState,
+          BTC: balance.btc,
+          LUNA: balance.luna,
+        }));
       });
-      setGatewayAddress(mint.gatewayAddress);
-      mint.on("deposit", async (deposit) => {
-        const hash = deposit.txHash();
-        console.log(hash);
-        const depositLog = (msg) =>
-          console.log(
-            `BTC deposit: ${Bitcoin.utils.transactionExplorerLink(
-              deposit.depositDetails.transaction,
-              "testnet"
-            )}\n
+  };
+
+  const getUserBalance = () => {
+    if (address) {
+      web3.eth.getBalance(address).then((balance) => {
+        console.log("User Balance(ETH): ", balance);
+        setUserBalance((prevState) => ({
+          ...prevState,
+          ETH: web3.utils.fromWei(balance, "ether"),
+        }));
+      });
+      contract.methods
+        .getBalance()
+        .call()
+        .then((balance) => {
+          console.log("User Balance: ", balance);
+          setUserBalance((prevState) => ({
+            ...prevState,
+            BTC: balance.btc,
+            LUNA: balance.luna,
+          }));
+        });
+    }
+  };
+
+  const getGames = () => {
+    contract.methods
+      .getGames()
+      .call()
+      .then((games) => {
+        console.log("Games: ", games);
+        setGames(games);
+      });
+  };
+
+  const deposit = async (symbol) => {
+    if (symbol === COIN.ETH) {
+      return false;
+    };
+    const mint = await renJS.lockAndMint({
+      asset: symbol,
+      from: symbol === COIN.BTC ? Bitcoin() : Terra(),
+      to: Ethereum(web3.currentProvider).Contract({
+        sendTo: contractAddress,
+        contractFn: symbol === COIN.BTC ?  "depositBTC" : "depositLUNA",
+        contractParams: [
+          {
+            name: "_msg",
+            type: "bytes",
+            value:  Buffer.from(`Depositing ${amount} BTC`),
+          },
+        ],
+      }),
+    });
+    setGatewayAddress(mint.gatewayAddress);
+    mint.on("deposit", async (deposit) => {
+      const hash = deposit.txHash();
+      console.log(hash);
+      const depositLog = (msg) =>
+        console.log(
+          `BTC deposit: ${Bitcoin.utils.transactionExplorerLink(
+            deposit.depositDetails.transaction,
+            "testnet"
+          )}\n
             RenVM Hash: ${hash}\n
             Status: ${deposit.status}\n
             ${msg}`
-          );
+        );
 
-        await deposit
-          .confirmed()
-          .on("target", (target) => depositLog(`0/${target} confirmations`))
-          .on("confirmation", (confs, target) =>
-            depositLog(`${confs}/${target} confirmations`)
-          );
+      await deposit
+        .confirmed()
+        .on("target", (target) => depositLog(`0/${target} confirmations`))
+        .on("confirmation", (confs, target) =>
+          depositLog(`${confs}/${target} confirmations`)
+        );
 
-        await deposit
-          .signed()
-          // Print RenVM status - "pending", "confirming" or "done".
-          .on("status", (status) => depositLog(`Status: ${status}`));
+      await deposit
+        .signed()
+        // Print RenVM status - "pending", "confirming" or "done".
+        .on("status", (status) => depositLog(`Status: ${status}`));
 
-        await deposit
-          .mint()
-          // Print Ethereum transaction hash.
-          .on("transactionHash", (txHash) => depositLog(`Mint tx: ${txHash}`));
+      await deposit
+        .mint()
+        // Print Ethereum transaction hash.
+        .on("transactionHash", (txHash) => depositLog(`Mint tx: ${txHash}`));
 
-        console.log(`Deposited ${amount} BTC.`);
+      console.log(`Deposited ${amount} BTC.`);
+    });
+  };
+
+  const withdraw = async (symbol, recipientAddress, amount) => {
+    const burnAndRelease = await renJS.burnAndRelease({
+      // Send BTC from Ethereum back to the Bitcoin blockchain.
+      asset: symbol,
+      to:
+        symbol === COIN.BTC
+          ? Bitcoin().Address(recipientAddress)
+          : Terra().Address(recipientAddress),
+      from: Ethereum(web3.currentProvider).Contract((recipientAddress) => ({
+        sendTo: contractAddress,
+
+        contractFn: "withdraw",
+
+        contractParams: [
+          {
+            type: "string",
+            name: "_symbol",
+            value: symbol,
+          },
+          {
+            type: "bytes",
+            name: "_to",
+            value: recipientAddress,
+          },
+          {
+            type: "uint256",
+            name: "_amount",
+            value:
+              symbol === COIN.BTC
+                ? RenJS.utils.toSmallestUnit(amount, 8)
+                : RenJS.utils.toSmallestUnit(amount, 8),
+          },
+        ],
+      })),
+    });
+    let confirmations = 0;
+    await burnAndRelease
+      .burn()
+      // Ethereum transaction confirmations.
+      .on("confirmation", (confs) => {
+        confirmations = confs;
+      })
+      // Print Ethereum transaction hash.
+      .on("transactionHash", (txHash) =>
+        console.log(`Ethereum transaction: ${String(txHash)}\nSubmitting...`)
+      );
+
+    await burnAndRelease
+      .release()
+      // Print RenVM status - "pending", "confirming" or "done".
+      .on("status", (status) =>
+        status === "confirming"
+          ? console.log(`${status} (${confirmations}/15)`)
+          : console.log(status)
+      )
+      // Print RenVM transaction hash
+      .on("txHash", (hash) => console.log(`RenVM hash: ${hash}`));
+
+    console.log(`Withdrew ${amount} BTC to ${recipientAddress}.`);
+  };
+
+  const openGame = async (symbol, amount) => {
+    contract.methods
+      .openGame(symbol, web3.utils.toWei(amount, "ether"))
+      .send({ from: address, value: web3.utils.toWei(amount, "ether") })
+      .then(() => {
+        update();
       });
-    }
+
+    setCreateGameModalIsOpened(false);
   };
 
   const acceptGame = (id, amount) => {
@@ -158,58 +283,32 @@ function App() {
     });
   };
 
-  const updateGames = () => {
-    contract.methods
-      .getGames()
-      .call()
-      .then((games) => {
-        setGames(games);
-      });
-  };
-
-  const getAddress = () => {
-    web3.eth.getAccounts().then((accounts) => {
-      setAddress(accounts[0]);
-    });
-  };
-
-  const updateBalance = () => {
-    if (address) {
-      web3.eth.getBalance(address).then((balance) => {
-        setBalance(web3.utils.fromWei(balance, "ether"));
-      });
-    }
-  };
-
   const update = () => {
-    updateGames();
-    getContractEthBalance();
-    getContractBtcBalance();
+    getGames();
+    getContractBalance();
     getAddress();
-    updateBalance();
-  };
-
-  const getContractEthBalance = () => {
-    web3.eth.getBalance(contractAddress).then((balance) => {
-      setContractBalance(web3.utils.fromWei(balance, "ether"));
-    });
-  };
-
-  const getContractBtcBalance = () => {
-    contract.methods
-      .getBtcBalance()
-      .call()
-      .then((btcBalance) => {
-        setBtcBalance(btcBalance);
-      });
+    getUserBalance();
   };
 
   const handleCloseCreateGameModal = () => {
     setAmount("");
     setSelectedCoin(COIN.ETH);
-    setBtcAddress("");
     setGatewayAddress("");
     setCreateGameModalIsOpened(false);
+  };
+
+  const handleCloseDepositModal = () => {
+    setAmount("");
+    setSelectedCoin(COIN.ETH);
+    setGatewayAddress("");
+    setDepositModalIsOpened(false);
+  };
+
+  const handleCloseWithdrawModal = () => {
+    setAmount("");
+    setSelectedCoin(COIN.ETH);
+    setRecipientAddress("");
+    setWithdrawModalIsOpened(false);
   };
 
   const handleCoinSelectChange = (event) => {
@@ -230,7 +329,8 @@ function App() {
           <Stack>
             <Typography variant="h6">Contract Balance</Typography>
             <Typography variant="h3" sx={{ color: "#009688" }}>
-              {Number(contractBalance).toFixed(2)} ETH / {btcBalance} BTC
+              {Number(contractBalance.ETH).toFixed(2)} ETH /{" "}
+              {contractBalance.BTC} BTC /{Number(contractBalance.LUNA)} LUNA
             </Typography>
           </Stack>
           <Stack>
@@ -259,7 +359,9 @@ function App() {
               <Identicon string={address} size={50} />
             </Avatar>
             <Typography variant="h2">
-              {Number(balance).toFixed(6)} <sup>ETH</sup>
+              {Number(userbalance.ETH).toFixed(4)} <sup>ETH</sup>
+              {Number(userbalance.BTC).toFixed(4)} <sup>BTC</sup>
+              {Number(userbalance.LUNA).toFixed(4)} <sup>LUNA</sup>
             </Typography>
             <Typography variant="body2" alignSelf="flex-end">
               {address}
@@ -276,7 +378,123 @@ function App() {
           <Button variant="outlined" onClick={update}>
             Refresh
           </Button>
+          <Button
+            variant="outlined"
+            onClick={() => setDepositModalIsOpened(true)}
+          >
+            Deposit
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={() => setWithdrawModalIsOpened(true)}
+          >
+            Withdraw
+          </Button>
         </Stack>
+
+        <Modal
+          open={depositModalIsOpened}
+          onClose={handleCloseDepositModal}
+          aria-labelledby="modal-modal-title"
+          aria-describedby="modal-modal-description"
+        >
+          <Box sx={modalStyle}>
+            <Stack spacing={5}>
+              <Stack spacing={2} direction="row">
+                <TextField
+                  autoFocus
+                  label={`Amount (${selectedCoin})`}
+                  variant="standard"
+                  value={amount}
+                  type="number"
+                  onChange={(e) => setAmount(e.target.value)}
+                />
+                <FormControl>
+                  <Select
+                    value={selectedCoin}
+                    onChange={handleCoinSelectChange}
+                  >
+                    <MenuItem value={COIN.BTC}>BTC</MenuItem>
+                    <MenuItem value={COIN.LUNA}>LUNA</MenuItem>
+                  </Select>
+                </FormControl>
+              </Stack>
+              <Typography variant="body">
+                Gateway Address: {gatewayAddress}
+              </Typography>
+              <Stack spacing={2} direction="row">
+                <Button
+                  variant="contained"
+                  onClick={() => deposit(selectedCoin)}
+                >
+                  Deposit
+                </Button>
+                <Button
+                  variant="contained"
+                  onClick={handleCloseDepositModal}
+                  color="error"
+                >
+                  Cancel
+                </Button>
+              </Stack>
+            </Stack>
+          </Box>
+        </Modal>
+
+        <Modal
+          open={withdrawModalIsOpened}
+          onClose={handleCloseWithdrawModal}
+          aria-labelledby="modal-modal-title"
+          aria-describedby="modal-modal-description"
+        >
+          <Box sx={modalStyle}>
+            <Stack spacing={5}>
+              <Stack spacing={2} direction="row">
+                <TextField
+                  autoFocus
+                  label={`Amount (${selectedCoin})`}
+                  variant="standard"
+                  value={amount}
+                  type="number"
+                  onChange={(e) => setAmount(e.target.value)}
+                />
+                <FormControl>
+                  <Select
+                    value={selectedCoin}
+                    onChange={handleCoinSelectChange}
+                  >
+                    <MenuItem value={COIN.BTC}>BTC</MenuItem>
+                    <MenuItem value={COIN.LUNA}>LUNA</MenuItem>
+                  </Select>
+                </FormControl>
+              </Stack>
+              <TextField
+                autoFocus
+                label="Recipient address"
+                variant="standard"
+                value={recipientAddress}
+                onChange={(e) => setRecipientAddress(e.target.value)}
+              />
+              <Stack spacing={2} direction="row">
+                <Button
+                  variant="contained"
+                  onClick={(selectedCoin, recipientAddress, amount) =>
+                    withdraw(selectedCoin, recipientAddress, amount)
+                  }
+                >
+                  Withdraw
+                </Button>
+                <Button
+                  variant="contained"
+                  onClick={handleCloseDepositModal}
+                  color="error"
+                >
+                  Cancel
+                </Button>
+              </Stack>
+            </Stack>
+          </Box>
+        </Modal>
 
         <Modal
           open={createGameModalIsOpened}
@@ -305,22 +523,11 @@ function App() {
                   </Select>
                 </FormControl>
               </Stack>
-              {selectedCoin === COIN.BTC && (
-                <>
-                  <TextField
-                    autoFocus
-                    label="BTC recipient address"
-                    variant="standard"
-                    value={btcAddress}
-                    onChange={(e) => setBtcAddress(e.target.value)}
-                  />
-                  <Typography variant="body">
-                    Gateway Address: {gatewayAddress}
-                  </Typography>
-                </>
-              )}
               <Stack spacing={2} direction="row">
-                <Button variant="contained" onClick={openGame}>
+                <Button
+                  variant="contained"
+                  onClick={() => openGame(selectedCoin, amount)}
+                >
                   Bet
                 </Button>
                 <Button
@@ -360,7 +567,7 @@ function App() {
                     {Number(web3.utils.fromWei(game.amount, "ether")).toFixed(
                       6
                     )}
-                    {game.isEth ? COIN.ETH : COIN.BTC}
+                    {game.symbol}
                   </Typography>
                 </CardContent>
                 <CardActions>

@@ -30,148 +30,200 @@ interface IGatewayRegistry {
 
 contract Flip {
   IGatewayRegistry public registry;
-  struct Game {
-    address initiator;
-    bytes initiatorBtcAddress;
-    uint256 amount;
-    bool isEth;
+
+  enum Symbol {
+    ETH,
+    BTC,
+    LUNA
   }
 
+  struct Game {
+    address initiator;
+    uint256 amount;
+    string symbol;
+  }
   Game[] private games;
+  struct Balance {
+    uint256 btc;
+    uint256 luna;
+  }
+  Balance private totalBalance;
+  mapping(address => Balance) private balance;
 
+  event Deposit(uint256 _amount, bytes _msg);
+  event Withdrawal(uint256 burnedAmount);
   event Result(bool result);
 
   constructor(IGatewayRegistry _registry) {
     registry = _registry;
   }
 
-  function depositBtc(
-    bytes memory _msg,
+  function compareStringsbyBytes(string memory s1, string memory s2)
+    public
+    pure
+    returns (bool)
+  {
+    return keccak256(abi.encodePacked(s1)) == keccak256(abi.encodePacked(s2));
+  }
+
+  function deposit(
+    string calldata _symbol,
+    // Parameters from RenVM
     uint256 _amount,
     bytes32 _nHash,
     bytes memory _sig
-  ) private returns (uint256 mintedAmount) {
-    bytes32 pHash = keccak256(abi.encode(_msg));
-    return
-      registry.getGatewayBySymbol("BTC").mint(pHash, _amount, _nHash, _sig);
-    // emit Deposit(mintedAmount, _msg);
-  }
-
-  function openGameWithEth() external payable {
-    games.push(
-      Game({
-        initiator: msg.sender,
-        initiatorBtcAddress: "",
-        amount: msg.value,
-        isEth: true
-      })
+  ) private {
+    bytes32 pHash = keccak256(abi.encode(_symbol));
+    uint256 mintedAmount = registry.getGatewayBySymbol(_symbol).mint(
+      pHash,
+      _amount,
+      _nHash,
+      _sig
     );
+    if (compareStringsbyBytes(_symbol, "BTC")) {
+      balance[msg.sender].btc += mintedAmount;
+      totalBalance.btc += mintedAmount;
+    }
+    if (compareStringsbyBytes(_symbol, "LUNA")) {
+      balance[msg.sender].luna += mintedAmount;
+      totalBalance.luna += mintedAmount;
+    }
+    emit Deposit(mintedAmount, _sig);
   }
 
-  function openGameWithBtc(
+  function depositBTC(
     // Parameters from users
     bytes calldata _msg,
-    bytes calldata _btcAddress,
     // Parameters from RenVM
     uint256 _amount,
     bytes32 _nHash,
     bytes calldata _sig
-  ) external {
-    uint256 mintedAmount = depositBtc(_msg, _amount, _nHash, _sig);
-    games.push(
-      Game({
-        initiator: msg.sender,
-        initiatorBtcAddress: _btcAddress,
-        amount: mintedAmount,
-        isEth: false
-      })
+  ) private {
+    bytes32 pHash = keccak256(abi.encode(_msg));
+    uint256 mintedAmount = registry.getGatewayBySymbol("BTC").mint(
+      pHash,
+      _amount,
+      _nHash,
+      _sig
     );
+    balance[msg.sender].btc += mintedAmount;
+    totalBalance.btc += mintedAmount;
+
+    emit Deposit(mintedAmount, _msg);
   }
 
-  //   function openGame(
-  //     // Parameters from users
-  //     bool isEth,
-  //     bytes calldata _msg,
-  //     bytes calldata _btcAddress,
-  //     // Parameters from RenVM
-  //     uint256 _amount,
-  //     bytes32 _nHash,
-  //     bytes calldata _sig
-  //   ) external payable {
-  //     if (isEth) {
-  //       games.push(
-  //         Game({
-  //           initiator: msg.sender,
-  //           initiatorBtcAddress: "",
-  //           amount: msg.value,
-  //           isEth: isEth
-  //         })
-  //       );
-  //     } else {
-  //       uint256 mintedAmount = depositBtc(_msg, _amount, _nHash, _sig);
-  //       games.push(
-  //         Game({
-  //           initiator: msg.sender,
-  //           initiatorBtcAddress: _btcAddress,
-  //           amount: mintedAmount,
-  //           isEth: false
-  //         })
-  //       );
-  //     }
-  //   }
+  function depositLUNA(
+    // Parameters from users
+    bytes calldata _msg,
+    // Parameters from RenVM
+    uint256 _amount,
+    bytes32 _nHash,
+    bytes calldata _sig
+  ) private {
+    bytes32 pHash = keccak256(abi.encode(_msg));
+    uint256 mintedAmount = registry.getGatewayBySymbol("LUNA").mint(
+      pHash,
+      _amount,
+      _nHash,
+      _sig
+    );
+    balance[msg.sender].luna += mintedAmount;
+    totalBalance.luna += mintedAmount;
+    emit Deposit(mintedAmount, _msg);
+  }
 
-  //   function acceptGame(
-  //     // Parameters from users
-  //     uint256 _id,
-  //     bytes calldata _msg,
-  //     bytes calldata _btcAddress,
-  //     // Parameters from RenVM
-  //     uint256 _amount,
-  //     bytes32 _nHash,
-  //     bytes calldata _sig
-  //   ) external payable {
-  //     bool result = uint256(
-  //       keccak256(abi.encodePacked(block.difficulty, block.timestamp))
-  //     ) %
-  //       2 ==
-  //       0;
-  //     if (games[_id].isEth) {
-  //       address payable winner;
-  //       if (result) {
-  //         winner = payable(msg.sender);
-  //       } else {
-  //         winner = payable(games[_id].initiator);
-  //       }
-  //       if (msg.value == games[_id].amount) {
-  //         winner.transfer(games[_id].amount * 2);
-  //         emit Result(result);
-  //         games[_id] = games[games.length - 1];
-  //         games.pop();
-  //       } else {
-  //         revert("Amount Error!");
-  //       }
-  //     } else {
-  //       uint256 mintedAmount = this.depositBtc(_msg, _amount, _nHash, _sig);
-  //       bytes memory winner;
-  //       if (result) {
-  //         winner = _btcAddress;
-  //       } else {
-  //         winner = games[_id].initiatorBtcAddress;
-  //       }
-  //       if (mintedAmount == games[_id].amount) {
-  //         uint256 burnedAmount = registry.getGatewayBySymbol("BTC").burn(
-  //           winner,
-  //           mintedAmount * 2
-  //         );
-  //         // emit Withdrawal(_to, burnedAmount, _msg);
-  //         emit Result(result);
-  //         games[_id] = games[games.length - 1];
-  //         games.pop();
-  //       } else {
-  //         revert("Amount Error!");
-  //       }
-  //     }
-  //   }
+  function withdraw(
+    string calldata _symbol,
+    bytes calldata _to,
+    uint256 _amount
+  ) external {
+    if (compareStringsbyBytes(_symbol, "BTC")) {
+      require(balance[msg.sender].btc >= _amount, "Deposit Amount Error");
+      balance[msg.sender].btc -= _amount;
+      totalBalance.btc -= _amount;
+    }
+    if (compareStringsbyBytes(_symbol, "LUNA")) {
+      require(balance[msg.sender].luna >= _amount, "Deposit Amount Error");
+      balance[msg.sender].luna -= _amount;
+      totalBalance.luna -= _amount;
+    }
+    uint256 burnedAmount = registry.getGatewayBySymbol(_symbol).burn(
+      _to,
+      _amount
+    );
+    emit Withdrawal(burnedAmount);
+  }
+
+  function openGame(string calldata _symbol, uint256 _amount) external payable {
+    if (compareStringsbyBytes(_symbol, "ETH")) {
+      games.push(
+        Game({ initiator: msg.sender, amount: msg.value, symbol: _symbol })
+      );
+    } else {
+      if (compareStringsbyBytes(_symbol, "BTC")) {
+        require(_amount <= balance[msg.sender].btc, "Balance Insufficient");
+        balance[msg.sender].btc -= _amount;
+      }
+      if (compareStringsbyBytes(_symbol, "LUNA")) {
+        require(_amount <= balance[msg.sender].luna, "Balance Insufficient");
+        balance[msg.sender].luna -= _amount;
+      }
+      games.push(
+        Game({ initiator: msg.sender, amount: _amount, symbol: _symbol })
+      );
+    }
+  }
+
+  function acceptGame(uint256 _id) external payable {
+    bool result = uint256(
+      keccak256(abi.encodePacked(block.difficulty, block.timestamp))
+    ) %
+      2 ==
+      0;
+    if (compareStringsbyBytes(games[_id].symbol, "ETH")) {
+      require(msg.value == games[_id].amount, "Amount Error");
+      if (result) {
+        payable(msg.sender).transfer(games[_id].amount * 2);
+      } else {
+        payable(games[_id].initiator).transfer(games[_id].amount * 2);
+      }
+    } else {
+      if (compareStringsbyBytes(games[_id].symbol, "BTC")) {
+        require(
+          games[_id].amount <= balance[msg.sender].btc,
+          "Balance Insufficient"
+        );
+      }
+      if (compareStringsbyBytes(games[_id].symbol, "LUNA")) {
+        require(
+          games[_id].amount <= balance[msg.sender].luna,
+          "Balance Insufficient"
+        );
+      }
+      if (result) {
+        if (compareStringsbyBytes(games[_id].symbol, "BTC")) {
+          balance[msg.sender].btc += games[_id].amount;
+          balance[games[_id].initiator].btc -= games[_id].amount;
+        }
+        if (compareStringsbyBytes(games[_id].symbol, "LUNA")) {
+          balance[msg.sender].luna += games[_id].amount;
+          balance[games[_id].initiator].luna -= games[_id].amount;
+        }
+      } else {
+        if (compareStringsbyBytes(games[_id].symbol, "BTC")) {
+          balance[msg.sender].btc -= games[_id].amount;
+          balance[games[_id].initiator].btc += games[_id].amount;
+        }
+        if (compareStringsbyBytes(games[_id].symbol, "LUNA")) {
+          balance[msg.sender].luna -= games[_id].amount;
+          balance[games[_id].initiator].luna += games[_id].amount;
+        }
+      }
+    }
+    emit Result(result);
+    games[_id] = games[games.length - 1];
+    games.pop();
+  }
 
   function flip() private view returns (bool) {
     return
@@ -180,62 +232,12 @@ contract Flip {
       0;
   }
 
-  function acceptGameWithEth(uint256 _id) external payable {
-    if (games[_id].isEth == false) {
-      revert("Type Error!");
-    }
-    if (msg.value != games[_id].amount) {
-      revert("Amount Error!");
-    }
-    bool result = flip();
-    address payable winner;
-    if (result) {
-      winner = payable(msg.sender);
-    } else {
-      winner = payable(games[_id].initiator);
-    }
-    winner.transfer(games[_id].amount * 2);
-    emit Result(result);
-    games[_id] = games[games.length - 1];
-    games.pop();
+  function getTotalBalance() public view returns (Balance memory) {
+    return totalBalance;
   }
 
-  function acceptGameWithBtc(
-    // Parameters from users
-    uint256 _id,
-    bytes calldata _msg,
-    bytes calldata _btcAddress,
-    // Parameters from RenVM
-    uint256 _amount,
-    bytes32 _nHash,
-    bytes calldata _sig
-  ) external {
-    if (games[_id].isEth == true) {
-      revert("Type Error!");
-    }
-    uint256 mintedAmount = depositBtc(_msg, _amount, _nHash, _sig);
-    if (mintedAmount != games[_id].amount) {
-      revert("Amount Error!");
-    }
-    bool result = flip();
-    bytes memory winner;
-    if (result) {
-      winner = _btcAddress;
-    } else {
-      winner = games[_id].initiatorBtcAddress;
-    }
-    uint256 burnedAmount = registry.getGatewayBySymbol("BTC").burn(
-      winner,
-      mintedAmount * 2
-    );
-    // emit Withdrawal(_to, burnedAmount, _msg);
-    emit Result(result);
-    games[_id] = games[games.length - 1];
-    games.pop();
-  }
-
-  function getBtcBalance() public view returns (uint256) {
-    return registry.getTokenBySymbol("BTC").balanceOf(address(this));
+  function getBalance() public view returns (Balance memory) {
+    return balance[msg.sender];
   }
 
   function getGames() public view returns (Game[] memory) {
