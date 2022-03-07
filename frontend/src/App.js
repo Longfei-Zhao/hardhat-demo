@@ -35,11 +35,11 @@ const COIN = {
   LUNA: "LUNA",
 };
 
-const contractAddress = "0x5701364dCF0D5Cc7AABca654402C6ec6755F1450";
+const contractAddress = "0x2A66347B4E85e8aCD4144AB495d48f4E7DCE724E";
 let web3Provider = window.ethereum;
 const web3 = new Web3(web3Provider || "http://127.0.0.1:8545");
 const contract = new web3.eth.Contract(FLIP_JSON.abi, contractAddress);
-const renJS = new RenJS("testnet", { useV2TransactionFormat: true });
+const renJS = new RenJS("testnet", { useV2TransactionFormat: true, logger: console });
 
 function App() {
   const modalStyle = {
@@ -153,12 +153,12 @@ function App() {
       from: symbol === COIN.BTC ? Bitcoin() : Terra(),
       to: Ethereum(web3.currentProvider).Contract({
         sendTo: contractAddress,
-        contractFn: symbol === COIN.BTC ?  "depositBTC" : "depositLUNA",
+        contractFn: symbol === COIN.BTC ? "depositBTC" : "depositLUNA",
         contractParams: [
           {
             name: "_msg",
             type: "bytes",
-            value:  Buffer.from(`Depositing ${amount} BTC`),
+            value: Buffer.from(`Depositing ${amount} BTC`),
           },
         ],
       }),
@@ -272,12 +272,22 @@ function App() {
   };
 
   const acceptGame = (id, amount) => {
-    contract.methods
-      .acceptGame(id)
-      .send({ from: address, value: amount })
-      .then(() => {
-        update();
-      });
+    if (games[id].symbol === COIN.ETH) {
+      contract.methods
+        .acceptGame(id)
+        .send({ from: address, value: amount })
+        .then(() => {
+          update();
+        });
+    }
+    else {
+      contract.methods
+        .acceptGame(id)
+        .call()
+        .then(() => {
+          update();
+        });
+    }
     contract.once("Result", (error, event) => {
       console.log(event);
     });
@@ -328,7 +338,7 @@ function App() {
           <Typography variant="h1">COIN FLIP</Typography>
           <Stack>
             <Typography variant="h6">Contract Balance</Typography>
-            <Typography variant="h3" sx={{ color: "#009688" }}>
+            <Typography variant="h4" sx={{ color: "#009688" }}>
               {Number(contractBalance.ETH).toFixed(2)} ETH /{" "}
               {contractBalance.BTC} BTC /{Number(contractBalance.LUNA)} LUNA
             </Typography>
@@ -358,13 +368,10 @@ function App() {
             >
               <Identicon string={address} size={50} />
             </Avatar>
-            <Typography variant="h2">
-              {Number(userbalance.ETH).toFixed(4)} <sup>ETH</sup>
-              {Number(userbalance.BTC).toFixed(4)} <sup>BTC</sup>
+            <Typography variant="h4">
+              {Number(userbalance.ETH).toFixed(4)} <sup>ETH</sup>/
+              {Number(userbalance.BTC).toFixed(4)} <sup>BTC</sup>/
               {Number(userbalance.LUNA).toFixed(4)} <sup>LUNA</sup>
-            </Typography>
-            <Typography variant="body2" alignSelf="flex-end">
-              {address}
             </Typography>
           </Stack>
         </Paper>
